@@ -11,24 +11,50 @@ import queue
 import urllib.request
 import urllib.parse
 import subprocess
+import re
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import tkinter as tk
 from tkinter import ttk
 import tkinter.messagebox as mb
+import tkinter.simpledialog as sd
 
 # --- APP CONFIGURATION ---
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "Geralt-of-Rivia611/BHANER"
-CONFIG_FILE = "bhaner_config.json"
 
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
+# Determine permanent app folder: use LocalAppData on Windows so files never clutter Downloads
+if sys.platform == "win32":
+    APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "bhaner")
 else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    APP_DIR = os.path.join(os.path.expanduser("~"), ".bhaner")
 
-THEMES_DIR = os.path.join(BASE_DIR, "themes")
+os.makedirs(APP_DIR, exist_ok=True)
+CONFIG_FILE = os.path.join(APP_DIR, "bhaner_config.json")
+THEMES_DIR = os.path.join(APP_DIR, "themes")
 FONTS_DIR = os.path.join(THEMES_DIR, "fonts")
 os.makedirs(FONTS_DIR, exist_ok=True)
+
+# Generate README.md in app directory
+README_FILE = os.path.join(APP_DIR, "README.txt")
+if not os.path.exists(README_FILE):
+    try:
+        with open(README_FILE, "w", encoding="utf-8") as f:
+            f.write(f"""=== bhaner Live Stage Projection Controller v{APP_VERSION} ===
+
+Directory: {APP_DIR}
+
+Folder Structure:
+- themes/       : Put custom JSON themes here or use "Import Font" in the app.
+- themes/fonts/ : Put local offline .ttf or .otf files here.
+- bhaner_config.json: Holds your saved defaults and Slot A/B/C assignments.
+
+Quick Keys:
+- F1 to F5 : Built-in Visual Presets
+- F6       : Custom Theme Slots (Slot A / B / C)
+- Enter    : Push Batch Text (or Zoom Punch on 2nd hit)
+""")
+    except Exception:
+        pass
 
 # 5 Built-in Core Presets
 BUILTIN_PRESETS = {
@@ -119,7 +145,6 @@ BUILTIN_PRESETS = {
     }
 }
 
-# Ensure an example custom theme template exists
 def ensure_custom_template():
     tpl_path = os.path.join(THEMES_DIR, "custom_template.json")
     if not os.path.exists(tpl_path):
@@ -567,8 +592,8 @@ class OperatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title(f"bhaner Controller v{APP_VERSION}")
-        self.root.geometry("540x600")
-        self.root.minsize(500, 560)
+        self.root.geometry("560x620")
+        self.root.minsize(520, 580)
 
         self.last_pushed_text = ""
         self.is_zoomed = False
@@ -577,7 +602,7 @@ class OperatorApp:
         self.custom_slot_var = tk.StringVar(value=CONFIG.get("active_custom_slot", "slot_a"))
 
         # Preset Radio Buttons Frame
-        preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=8)
+        preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=10)
         preset_frame.pack(fill="x", padx=15, pady=6)
 
         self.presets = [
@@ -594,12 +619,12 @@ class OperatorApp:
 
         for idx, (label, pid) in enumerate(self.presets):
             rb = ttk.Radiobutton(preset_grid, text=label, value=pid, variable=self.preset_var, command=self.on_preset_change)
-            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=2)
+            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=3)
             self.root.bind(f"<F{idx+1}>", lambda e, p=pid: self.set_preset(p))
 
         # Custom Options Sub-Panel
-        self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=6)
-        self.custom_box.pack(fill="x", pady=5)
+        self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=8)
+        self.custom_box.pack(fill="x", pady=6)
 
         # Slot selector radio row
         slot_row = ttk.Frame(self.custom_box)
@@ -607,20 +632,20 @@ class OperatorApp:
 
         ttk.Label(slot_row, text="Active Slot:").pack(side="left", padx=4)
         for s_code, s_label in [("slot_a", "Slot A"), ("slot_b", "Slot B"), ("slot_c", "Slot C")]:
-            ttk.Radiobutton(slot_row, text=s_label, value=s_code, variable=self.custom_slot_var, command=self.on_slot_change).pack(side="left", padx=6)
+            ttk.Radiobutton(slot_row, text=s_label, value=s_code, variable=self.custom_slot_var, command=self.on_slot_change).pack(side="left", padx=8)
 
-        # File assignment row
+        # File assignment & Import row
         assign_row = ttk.Frame(self.custom_box)
-        assign_row.pack(fill="x", pady=3)
+        assign_row.pack(fill="x", pady=4)
 
-        ttk.Label(assign_row, text="Assigned Theme:").pack(side="left", padx=4)
+        ttk.Label(assign_row, text="Theme:").pack(side="left", padx=4)
         self.theme_combo_var = tk.StringVar()
-        self.theme_combobox = ttk.Combobox(assign_row, textvariable=self.theme_combo_var, state="readonly", width=22)
-        self.theme_combobox.pack(side="left", padx=4)
+        self.theme_combobox = ttk.Combobox(assign_row, textvariable=self.theme_combo_var, state="readonly", width=18)
+        self.theme_combobox.pack(side="left", padx=3)
 
-        ttk.Button(assign_row, text="Assign to Slot", command=self.assign_theme_to_current_slot).pack(side="left", padx=2)
+        ttk.Button(assign_row, text="Assign", width=7, command=self.assign_theme_to_current_slot).pack(side="left", padx=2)
+        ttk.Button(assign_row, text="Import Font", width=12, command=self.import_google_font_dialog).pack(side="left", padx=2)
         ttk.Button(assign_row, text="Reload", width=7, command=self.reload_themes).pack(side="left", padx=2)
-        ttk.Button(assign_row, text="Open Folder", width=11, command=self.open_themes_folder).pack(side="left", padx=2)
 
         # Favorite Bar
         fav_frame = ttk.Frame(preset_frame)
@@ -713,6 +738,56 @@ class OperatorApp:
         self.on_preset_change()
         mb.showinfo("Slot Saved", f"Assigned '{tid}' to {slot.upper()}.\nSaved to preset memory.")
 
+    def import_google_font_dialog(self):
+        url = sd.askstring("Import Google Font", "Paste Google Font CSS URL:\n(e.g., https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap)")
+        if not url or not url.strip():
+            return
+        url = url.strip()
+
+        # Extract family name from URL
+        match = re.search(r'family=([^:&]+)', url)
+        raw_name = match.group(1).replace('+', ' ') if match else "CustomFont"
+
+        display_name = sd.askstring("Theme Name", f"Enter a label for this theme:", initialvalue=raw_name)
+        if not display_name:
+            display_name = raw_name
+
+        slug = re.sub(r'[^a-zA-Z0-9_]', '', display_name.lower().replace(' ', '_'))
+        theme_filename = f"{slug}.json"
+        target_path = os.path.join(THEMES_DIR, theme_filename)
+
+        new_theme = {
+            "id": slug,
+            "name": display_name,
+            "google_font_url": url,
+            "font_family": f"'{raw_name}', sans-serif",
+            "font_file": "",
+            "text_transform": "uppercase",
+            "letter_spacing": "1px",
+            "text_color": "#FFFFFF",
+            "text_shadow": "-4px -4px 0 #000, 4px -4px 0 #000, 0 0 30px rgba(255,98,0,0.8)",
+            "container_background": "transparent",
+            "impact_zoom": {
+                "scale": 1.2,
+                "text_color": "#FF6200",
+                "text_shadow": "-4px -4px 0 #FFF, 4px -4px 0 #FFF, 0 0 45px #FF6200"
+            }
+        }
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(new_theme, f, indent=2)
+
+        self.reload_themes()
+        # Automatically assign to current custom slot
+        slot = self.custom_slot_var.get()
+        CONFIG.setdefault("slots", {})[slot] = slug
+        save_config(CONFIG)
+        self.preset_var.set("custom")
+        self.sync_active_slot_display()
+        self.on_preset_change()
+
+        mb.showinfo("Font Imported", f"Theme '{display_name}' created and assigned to {slot.upper()}!")
+
     def reload_themes(self):
         global DISK_THEMES
         DISK_THEMES = load_theme_files()
@@ -720,15 +795,6 @@ class OperatorApp:
         self.sync_active_slot_display()
         if self.preset_var.get() == "custom":
             self.on_preset_change()
-        mb.showinfo("Themes Reloaded", f"Loaded {len(DISK_THEMES)} custom themes from folder.")
-
-    def open_themes_folder(self):
-        if sys.platform == 'win32':
-            os.startfile(THEMES_DIR)
-        elif sys.platform == 'darwin':
-            subprocess.Popen(['open', THEMES_DIR])
-        else:
-            subprocess.Popen(['xdg-open', THEMES_DIR])
 
     def save_as_favorite(self):
         CONFIG["favorite_mode"] = self.preset_var.get()
