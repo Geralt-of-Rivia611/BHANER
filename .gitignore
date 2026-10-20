@@ -1,0 +1,6 @@
+dist/,
+build/,
+*.spec,
+__pycache__/,
+bhaner_config.json, 
+*.bat

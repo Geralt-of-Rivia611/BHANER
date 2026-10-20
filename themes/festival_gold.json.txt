@@ -1,0 +1,22 @@
+{
+  "id": "festival_gold",
+  "name": "Festival Neon Gold",
+  
+  "font_family": "DrukWide, 'Impact', sans-serif",
+  "google_font_url": "",
+  "font_file": "DrukWide-Bold.otf",
+  
+  "text_transform": "uppercase",
+  "letter_spacing": "3px",
+  
+  "text_color": "#FFD700",
+  "text_shadow": "-4px -4px 0 #000, 4px -4px 0 #000, 0 0 35px #FFA500",
+  
+  "container_background": "transparent",
+  
+  "impact_zoom": {
+    "scale": 1.2,
+    "text_color": "#FFFFFF",
+    "text_shadow": "0 0 40px #FFF, 0 0 70px #FFD700"
+  }
+}

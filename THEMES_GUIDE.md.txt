@@ -1,0 +1,76 @@
+# Customizing Themes & Fonts in bhaner
+
+You can create unlimited custom visual styles for text projections without touching code or recompiling the application.
+
+---
+
+## 1. How to Add a New Theme JSON
+
+1. Open **bhaner**.
+2. In the top bar, click **Open Folder 📁**. This opens your local `themes/` directory in Windows Explorer.
+3. Pick any existing file (such as `01_flame.json`), right-click it, and select **Copy**, then **Paste** in the same folder.
+4. Rename your copy to something descriptive (e.g., `synthwave_glow.json`).
+5. Open your new file in **Notepad** (Right-click $\rightarrow$ *Open with* $\rightarrow$ *Notepad*).
+6. Change the `"id"` and `"name"` to match your theme:
+   ```json
+   {
+     "id": "synthwave_glow",
+     "name": "Synthwave Neon Glow",
+     ...
+   }
+   ```
+7. Save the file in Notepad (`Ctrl + S`).
+8. Return to the bhaner app and click **Reload ⟳**. Your new theme will instantly appear in the **Active Theme** dropdown.
+
+---
+
+## 2. How to Use Google Web Fonts
+
+Google Fonts gives you access to hundreds of free stage-ready typefaces.
+
+### Step-by-Step:
+1. Visit **[fonts.google.com](https://fonts.google.com)**.
+2. Search for high-impact display fonts (e.g., *Bebas Neue*, *Anton*, *Oswald*, *Rubik Glitch*).
+3. Select the font and click **Get font** $\rightarrow$ **Get embed code**.
+4. In the code panel on the right, find the standard `<link>` block. Look for the `href` URL that points to `fonts.googleapis.com`:
+   > Example: `https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap`
+5. Open your theme `.json` file in Notepad:
+   * Paste the link into `"google_font_url"`.
+   * Set `"font_family"` to the exact name given by Google Fonts followed by `sans-serif`.
+   * Keep `"font_file"` blank (`""`).
+
+### Complete Google Font Example:
+```json
+{
+  "id": "bebas_gold",
+  "name": "Bebas Neue Stage Gold",
+  "google_font_url": "[https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap](https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap)",
+  "font_family": "'Bebas Neue', sans-serif",
+  "font_file": "",
+  "text_transform": "uppercase",
+  "letter_spacing": "2px",
+  "text_color": "#FFCC00",
+  "text_shadow": "-4px -4px 0 #000, 4px -4px 0 #000, 0 0 30px rgba(255, 204, 0, 0.8)",
+  "container_background": "transparent",
+  "impact_zoom": {
+    "scale": 1.2,
+    "text_color": "#FFFFFF",
+    "text_shadow": "-4px -4px 0 #FFCC00, 4px -4px 0 #FFCC00, 0 0 50px #FFF"
+  }
+}
+```
+
+> **Live Venue Tip:** Google Fonts require an internet connection when the page first loads to fetch the font files. For music events with spotty or zero venue internet, use **Method 1 (Local Font File)** by downloading the font's `.ttf` or `.otf` file and putting it into the `themes/fonts/` folder.
+
+---
+
+## 3. How to Use Local Font Files (100% Offline)
+
+1. Put your font file (e.g. `AkiraExpanded.otf`) directly into `themes/fonts/`.
+2. In your JSON file, set:
+   ```json
+   "font_file": "AkiraExpanded.otf",
+   "google_font_url": "",
+   "font_family": "'Impact', sans-serif"
+   ```
+   *(The app loads the local file automatically, using `font_family` only as a secondary fallback).*
