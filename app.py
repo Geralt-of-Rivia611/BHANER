@@ -9,6 +9,7 @@ import time
 import webbrowser
 import queue
 import urllib.request
+import urllib.parse
 import subprocess
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import tkinter as tk
@@ -16,11 +17,10 @@ from tkinter import ttk
 import tkinter.messagebox as mb
 
 # --- APP CONFIGURATION ---
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 GITHUB_REPO = "Geralt-of-Rivia611/BHANER"
 CONFIG_FILE = "bhaner_config.json"
 
-# Base directory for executable or script
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -30,10 +30,10 @@ THEMES_DIR = os.path.join(BASE_DIR, "themes")
 FONTS_DIR = os.path.join(THEMES_DIR, "fonts")
 os.makedirs(FONTS_DIR, exist_ok=True)
 
-# Default templates to generate if the folder is empty
-DEFAULT_THEMES = {
-    "01_flame.json": {
-        "id": "p1_flame",
+# 5 Built-in Core Presets
+BUILTIN_PRESETS = {
+    "p1": {
+        "id": "p1",
         "name": "P1: Flame (Orange Stage)",
         "font_family": "'Impact', 'Arial Black', sans-serif",
         "google_font_url": "",
@@ -49,8 +49,8 @@ DEFAULT_THEMES = {
             "text_shadow": "-4px -4px 0 #FFF, 4px -4px 0 #FFF, -4px 4px 0 #FFF, 4px 4px 0 #FFF, 0 0 40px rgba(255,98,0,0.9)"
         }
     },
-    "02_ocean_punch.json": {
-        "id": "p2_ocean_punch",
+    "p2": {
+        "id": "p2",
         "name": "P2: Ocean Punch (Cyan Swirl)",
         "font_family": "'Impact', 'Arial Black', sans-serif",
         "google_font_url": "",
@@ -66,8 +66,8 @@ DEFAULT_THEMES = {
             "text_shadow": "-4px -4px 0 #FF6200, 4px -4px 0 #FF6200, -4px 4px 0 #FF6200, 4px 4px 0 #FF6200, 0 0 40px #FFF"
         }
     },
-    "03_core_shield.json": {
-        "id": "p3_core_shield",
+    "p3": {
+        "id": "p3",
         "name": "P3: Core Flare Shield (Hotspot)",
         "font_family": "'Impact', 'Arial Black', sans-serif",
         "google_font_url": "",
@@ -83,8 +83,8 @@ DEFAULT_THEMES = {
             "text_shadow": "-5px -5px 0 #000, 5px -5px 0 #000, -5px 5px 0 #000, 5px 5px 0 #000, 0 0 50px #FF6200"
         }
     },
-    "04_cyber_cyan.json": {
-        "id": "p4_cyber_cyan",
+    "p4": {
+        "id": "p4",
         "name": "P4: Cyber Cyan Modern",
         "font_family": "'Segoe UI Black', 'Arial Black', sans-serif",
         "google_font_url": "",
@@ -100,8 +100,8 @@ DEFAULT_THEMES = {
             "text_shadow": "0 0 35px #00F2FE, -4px -4px 0 #000, 4px -4px 0 #000"
         }
     },
-    "05_minimal_white.json": {
-        "id": "p5_minimal_white",
+    "p5": {
+        "id": "p5",
         "name": "P5: Minimalist White Lumen",
         "font_family": "'Arial Black', sans-serif",
         "google_font_url": "",
@@ -119,19 +119,36 @@ DEFAULT_THEMES = {
     }
 }
 
-def ensure_default_themes():
-    for filename, content in DEFAULT_THEMES.items():
-        file_path = os.path.join(THEMES_DIR, filename)
-        if not os.path.exists(file_path):
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(content, f, indent=2)
-            except Exception:
-                pass
+# Ensure an example custom theme template exists
+def ensure_custom_template():
+    tpl_path = os.path.join(THEMES_DIR, "custom_template.json")
+    if not os.path.exists(tpl_path):
+        example_theme = {
+            "id": "festival_gold",
+            "name": "Festival Neon Gold",
+            "font_family": "'Impact', sans-serif",
+            "google_font_url": "",
+            "font_file": "",
+            "text_transform": "uppercase",
+            "letter_spacing": "2px",
+            "text_color": "#FFD700",
+            "text_shadow": "-4px -4px 0 #000, 4px -4px 0 #000, 0 0 35px #FFA500",
+            "container_background": "transparent",
+            "impact_zoom": {
+                "scale": 1.2,
+                "text_color": "#FFFFFF",
+                "text_shadow": "0 0 40px #FFF, 0 0 70px #FFD700"
+            }
+        }
+        try:
+            with open(tpl_path, "w", encoding="utf-8") as f:
+                json.dump(example_theme, f, indent=2)
+        except Exception:
+            pass
 
-ensure_default_themes()
+ensure_custom_template()
 
-def load_all_themes() -> dict[str, dict]:
+def load_theme_files() -> dict[str, dict]:
     themes = {}
     if os.path.exists(THEMES_DIR):
         for item in sorted(os.listdir(THEMES_DIR)):
@@ -144,30 +161,48 @@ def load_all_themes() -> dict[str, dict]:
                         themes[tid] = data
                 except Exception:
                     pass
-    if not themes:
-        themes["p1_flame"] = DEFAULT_THEMES["01_flame.json"]
     return themes
 
-AVAILABLE_THEMES = load_all_themes()
+DISK_THEMES = load_theme_files()
 
-def load_favorite_theme() -> str:
-    try:
-        if os.path.exists(CONFIG_FILE):
+def load_config() -> dict:
+    default_cfg = {
+        "favorite_mode": "p1",
+        "active_custom_slot": "slot_a",
+        "slots": {
+            "slot_a": "festival_gold",
+            "slot_b": "",
+            "slot_c": ""
+        }
+    }
+    if os.path.exists(CONFIG_FILE):
+        try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
-                fav = data.get("favorite_theme")
-                if fav in AVAILABLE_THEMES:
-                    return fav
-    except Exception:
-        pass
-    return next(iter(AVAILABLE_THEMES.keys()))
+                default_cfg.update(data)
+        except Exception:
+            pass
+    return default_cfg
 
-def save_favorite_theme(theme_id: str):
+def save_config(cfg: dict):
     try:
         with open(CONFIG_FILE, "w") as f:
-            json.dump({"favorite_theme": theme_id}, f)
+            json.dump(cfg, f, indent=2)
     except Exception:
         pass
+
+CONFIG = load_config()
+
+def resolve_theme(mode: str, custom_slot: str) -> dict:
+    if mode in BUILTIN_PRESETS:
+        return BUILTIN_PRESETS[mode]
+    elif mode == "custom":
+        assigned_id = CONFIG.get("slots", {}).get(custom_slot, "")
+        if assigned_id in DISK_THEMES:
+            return DISK_THEMES[assigned_id]
+        if DISK_THEMES:
+            return next(iter(DISK_THEMES.values()))
+    return BUILTIN_PRESETS["p1"]
 
 # --- AUTO-UPDATE PIPELINE ---
 def check_for_updates(parent_window):
@@ -240,11 +275,13 @@ def find_free_port(preferred: int = 8000) -> int:
 
 ACTIVE_PORT = find_free_port(8000)
 
-current_theme_id = load_favorite_theme()
+current_mode = CONFIG.get("favorite_mode", "p1")
+current_custom_slot = CONFIG.get("active_custom_slot", "slot_a")
+
 current_state = {
     "text": "",
     "zoom": False,
-    "theme": AVAILABLE_THEMES[current_theme_id]
+    "theme": resolve_theme(current_mode, current_custom_slot)
 }
 state_lock = threading.Lock()
 clients_queues = set()
@@ -331,14 +368,12 @@ HTML_PAGE = f"""<!DOCTYPE html>
     function applyTheme(theme) {{
       activeTheme = theme;
 
-      // Google Font URL
       if (theme.google_font_url && theme.google_font_url.trim()) {{
         googleFontLink.href = theme.google_font_url;
       }} else {{
         googleFontLink.removeAttribute('href');
       }}
 
-      // Local Custom Font file served from /fonts/
       if (theme.font_file && theme.font_file.trim()) {{
         dynamicFontFace.innerHTML = `
           @font-face {{
@@ -454,7 +489,6 @@ class RobustServerHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         elif self.path.startswith('/fonts/'):
-            # Serve local custom font files from themes/fonts/
             filename = urllib.parse.unquote(self.path[len('/fonts/'):])
             font_path = os.path.join(FONTS_DIR, os.path.basename(filename))
             if os.path.isfile(font_path):
@@ -533,39 +567,71 @@ class OperatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title(f"bhaner Controller v{APP_VERSION}")
-        self.root.geometry("540x550")
-        self.root.minsize(480, 500)
+        self.root.geometry("540x600")
+        self.root.minsize(500, 560)
 
         self.last_pushed_text = ""
         self.is_zoomed = False
-        self.current_theme_id = load_favorite_theme()
 
-        # Theme Selector Toolbar
-        theme_frame = ttk.LabelFrame(root, text=" Visual Theme & Custom Typography ", padding=8)
-        theme_frame.pack(fill="x", padx=15, pady=6)
+        self.preset_var = tk.StringVar(value=CONFIG.get("favorite_mode", "p1"))
+        self.custom_slot_var = tk.StringVar(value=CONFIG.get("active_custom_slot", "slot_a"))
 
-        sel_row = ttk.Frame(theme_frame)
-        sel_row.pack(fill="x", pady=2)
+        # Preset Radio Buttons Frame
+        preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=8)
+        preset_frame.pack(fill="x", padx=15, pady=6)
 
-        ttk.Label(sel_row, text="Active Theme:").pack(side="left", padx=4)
+        self.presets = [
+            ("P1: Flame (Orange Stage)", "p1"),
+            ("P2: Ocean Punch (Cyan Swirl)", "p2"),
+            ("P3: Core Flare Shield", "p3"),
+            ("P4: Cyber Cyan", "p4"),
+            ("P5: Minimal White", "p5"),
+            ("P6: Custom (3 User Slots)", "custom")
+        ]
 
-        self.theme_var = tk.StringVar(value=self.current_theme_id)
-        self.theme_combobox = ttk.Combobox(sel_row, textvariable=self.theme_var, state="readonly", width=28)
+        preset_grid = ttk.Frame(preset_frame)
+        preset_grid.pack(fill="x")
+
+        for idx, (label, pid) in enumerate(self.presets):
+            rb = ttk.Radiobutton(preset_grid, text=label, value=pid, variable=self.preset_var, command=self.on_preset_change)
+            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=2)
+            self.root.bind(f"<F{idx+1}>", lambda e, p=pid: self.set_preset(p))
+
+        # Custom Options Sub-Panel
+        self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=6)
+        self.custom_box.pack(fill="x", pady=5)
+
+        # Slot selector radio row
+        slot_row = ttk.Frame(self.custom_box)
+        slot_row.pack(fill="x", pady=2)
+
+        ttk.Label(slot_row, text="Active Slot:").pack(side="left", padx=4)
+        for s_code, s_label in [("slot_a", "Slot A"), ("slot_b", "Slot B"), ("slot_c", "Slot C")]:
+            ttk.Radiobutton(slot_row, text=s_label, value=s_code, variable=self.custom_slot_var, command=self.on_slot_change).pack(side="left", padx=6)
+
+        # File assignment row
+        assign_row = ttk.Frame(self.custom_box)
+        assign_row.pack(fill="x", pady=3)
+
+        ttk.Label(assign_row, text="Assigned Theme:").pack(side="left", padx=4)
+        self.theme_combo_var = tk.StringVar()
+        self.theme_combobox = ttk.Combobox(assign_row, textvariable=self.theme_combo_var, state="readonly", width=22)
         self.theme_combobox.pack(side="left", padx=4)
-        self.theme_combobox.bind("<<ComboboxSelected>>", self.on_theme_selected)
 
-        ttk.Button(sel_row, text="Reload ⟳", width=9, command=self.reload_themes).pack(side="left", padx=3)
-        ttk.Button(sel_row, text="Open Folder 📁", command=self.open_themes_folder).pack(side="left", padx=3)
+        ttk.Button(assign_row, text="Assign to Slot", command=self.assign_theme_to_current_slot).pack(side="left", padx=2)
+        ttk.Button(assign_row, text="Reload", width=7, command=self.reload_themes).pack(side="left", padx=2)
+        ttk.Button(assign_row, text="Open Folder", width=11, command=self.open_themes_folder).pack(side="left", padx=2)
 
-        fav_row = ttk.Frame(theme_frame)
-        fav_row.pack(fill="x", pady=4)
-
-        self.fav_status_label = ttk.Label(fav_row, text=f"★ Startup Default: {AVAILABLE_THEMES[self.current_theme_id].get('name')}", font=("Segoe UI", 9, "bold"))
+        # Favorite Bar
+        fav_frame = ttk.Frame(preset_frame)
+        fav_frame.pack(fill="x", pady=4)
+        self.fav_status_label = ttk.Label(fav_frame, text=self.get_fav_label(), font=("Segoe UI", 9, "bold"))
         self.fav_status_label.pack(side="left", padx=4)
 
-        ttk.Button(fav_row, text="Set as Default ★", command=self.save_as_favorite).pack(side="right", padx=4)
+        ttk.Button(fav_frame, text="Set as Default", command=self.save_as_favorite).pack(side="right", padx=4)
 
-        self.refresh_combobox_values()
+        self.update_theme_combobox()
+        self.sync_active_slot_display()
 
         # Transmission Mode
         self.mode_var = tk.StringVar(value="live")
@@ -598,28 +664,63 @@ class OperatorApp:
         self.root.after(700, self.open_browser)
         check_for_updates(self.root)
 
-    def refresh_combobox_values(self):
-        names = [f"{tid}: {data.get('name', tid)}" for tid, data in AVAILABLE_THEMES.items()]
-        self.theme_combobox['values'] = names
-        for idx, tid in enumerate(AVAILABLE_THEMES.keys()):
-            if tid == self.current_theme_id:
-                self.theme_combobox.current(idx)
-                break
+    def get_fav_label(self) -> str:
+        mode = CONFIG.get("favorite_mode", "p1")
+        if mode == "custom":
+            slot = CONFIG.get("active_custom_slot", "slot_a")
+            theme_id = CONFIG.get("slots", {}).get(slot, "Default")
+            return f"[Default]: Custom ({slot.upper()}: {theme_id})"
+        return f"[Default]: {BUILTIN_PRESETS.get(mode, {}).get('name', mode.upper())}"
 
-    def on_theme_selected(self, event=None):
-        selected_text = self.theme_var.get()
-        tid = selected_text.split(":")[0].strip()
-        if tid in AVAILABLE_THEMES:
-            self.current_theme_id = tid
-            broadcast_payload({"theme": AVAILABLE_THEMES[tid]})
+    def update_theme_combobox(self):
+        theme_names = [f"{tid}: {data.get('name', tid)}" for tid, data in DISK_THEMES.items()]
+        self.theme_combobox['values'] = theme_names
+
+    def sync_active_slot_display(self):
+        current_slot = self.custom_slot_var.get()
+        assigned_id = CONFIG.get("slots", {}).get(current_slot, "")
+        for idx, tid in enumerate(DISK_THEMES.keys()):
+            if tid == assigned_id:
+                self.theme_combobox.current(idx)
+                return
+        if DISK_THEMES:
+            self.theme_combobox.current(0)
+
+    def set_preset(self, preset_id: str):
+        self.preset_var.set(preset_id)
+        self.on_preset_change()
+
+    def on_preset_change(self):
+        theme = resolve_theme(self.preset_var.get(), self.custom_slot_var.get())
+        broadcast_payload({"theme": theme})
+
+    def on_slot_change(self):
+        CONFIG["active_custom_slot"] = self.custom_slot_var.get()
+        save_config(CONFIG)
+        self.sync_active_slot_display()
+        if self.preset_var.get() == "custom":
+            self.on_preset_change()
+
+    def assign_theme_to_current_slot(self):
+        selected = self.theme_combo_var.get()
+        if not selected:
+            return
+        tid = selected.split(":")[0].strip()
+        slot = self.custom_slot_var.get()
+        CONFIG.setdefault("slots", {})[slot] = tid
+        save_config(CONFIG)
+        self.preset_var.set("custom")
+        self.on_preset_change()
+        mb.showinfo("Slot Saved", f"Assigned '{tid}' to {slot.upper()}.\nSaved to preset memory.")
 
     def reload_themes(self):
-        global AVAILABLE_THEMES
-        AVAILABLE_THEMES = load_all_themes()
-        self.refresh_combobox_values()
-        if self.current_theme_id in AVAILABLE_THEMES:
-            broadcast_payload({"theme": AVAILABLE_THEMES[self.current_theme_id]})
-        mb.showinfo("Themes Reloaded", f"Loaded {len(AVAILABLE_THEMES)} theme presets successfully.")
+        global DISK_THEMES
+        DISK_THEMES = load_theme_files()
+        self.update_theme_combobox()
+        self.sync_active_slot_display()
+        if self.preset_var.get() == "custom":
+            self.on_preset_change()
+        mb.showinfo("Themes Reloaded", f"Loaded {len(DISK_THEMES)} custom themes from folder.")
 
     def open_themes_folder(self):
         if sys.platform == 'win32':
@@ -630,9 +731,10 @@ class OperatorApp:
             subprocess.Popen(['xdg-open', THEMES_DIR])
 
     def save_as_favorite(self):
-        save_favorite_theme(self.current_theme_id)
-        name = AVAILABLE_THEMES[self.current_theme_id].get("name", self.current_theme_id)
-        self.fav_status_label.config(text=f"★ Startup Default: {name}")
+        CONFIG["favorite_mode"] = self.preset_var.get()
+        CONFIG["active_custom_slot"] = self.custom_slot_var.get()
+        save_config(CONFIG)
+        self.fav_status_label.config(text=self.get_fav_label())
 
     def open_browser(self):
         webbrowser.open(f"http://127.0.0.1:{ACTIVE_PORT}")
