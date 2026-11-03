@@ -20,10 +20,10 @@ import tkinter.messagebox as mb
 import tkinter.simpledialog as sd
 
 # --- APP CONFIGURATION ---
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.2"
 GITHUB_REPO = "Geralt-of-Rivia611/BHANER"
 
-# Permanent AppData path to prevent polluting the Downloads directory
+# Permanent AppData path
 if sys.platform == "win32":
     APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "bhaner")
 else:
@@ -76,12 +76,13 @@ Folder Structure:
 - themes/       : Custom JSON theme files.
 - themes/fonts/ : Local offline font files (.ttf / .otf).
 - sessions/     : Automatic text logs of every show run.
-- bhaner_config.json: Saved defaults and Slot A/B/C assignments.
+- bhaner_config.json: Saved defaults, hotkeys, and custom background presets.
 
 Quick Keys:
-- F1 to F5 : Built-in Visual Presets
-- F6       : Custom Theme Slots (Slot A / B / C)
-- Enter    : Push Batch Text (or Zoom Punch on 2nd press)
+- F1 to F5     : Built-in Visual Presets
+- F6           : Custom Theme Slots (Slot A / B / C)
+- Right Shift  : Instant Clear Screen (rebindable in settings)
+- Enter        : Push Batch Text (or Zoom Punch on 2nd press)
 """)
     except Exception:
         pass
@@ -228,6 +229,13 @@ def load_config() -> dict:
             "slot_a": "festival_gold",
             "slot_b": "",
             "slot_c": ""
+        },
+        "clear_hotkey": "Shift_R",
+        "active_bg_preset": "b1",
+        "bg_presets": {
+            "b1": "transparent",
+            "b2": "",
+            "b3": ""
         }
     }
     if os.path.exists(CONFIG_FILE):
@@ -248,16 +256,54 @@ def save_config(cfg: dict):
 
 CONFIG = load_config()
 
+def sanitize_color_input(raw: str) -> str:
+    """Intelligently detects and normalizes Hex, raw RGB numbers, rgb(), rgba(), and gradients."""
+    s = raw.strip()
+    if not s:
+        return ""
+
+    # Check if user entered raw numbers like "255, 0, 128" or "255 0 128"
+    nums = re.findall(r'[-+]?[0-9]*\.?[0-9]+', s)
+    if len(nums) == 3 and not s.lower().startswith(('rgb', 'hsl', '#')):
+        return f"rgb({nums[0]}, {nums[1]}, {nums[2]})"
+    elif len(nums) == 4 and not s.lower().startswith(('rgba', 'hsl', '#')):
+        return f"rgba({nums[0]}, {nums[1]}, {nums[2]}, {nums[3]})"
+
+    # Hex without # (3, 4, 6, 8 hex digits)
+    if re.fullmatch(r'[0-9a-fA-F]{3,8}', s):
+        if len(s) in (3, 4, 6, 8):
+            return f"#{s}"
+
+    return s
+
+def get_current_background() -> str:
+    active_bg = CONFIG.get("active_bg_preset", "b1")
+    val = CONFIG.get("bg_presets", {}).get(active_bg, "")
+    val = sanitize_color_input(val)
+    if active_bg == "b1" or not val:
+        return "transparent"
+    return val
+
 def resolve_theme(mode: str, custom_slot: str) -> dict:
+    base_theme = {}
     if mode in BUILTIN_PRESETS:
-        return BUILTIN_PRESETS[mode]
+        base_theme = dict(BUILTIN_PRESETS[mode])
     elif mode == "custom":
         assigned_id = CONFIG.get("slots", {}).get(custom_slot, "")
         if assigned_id in DISK_THEMES:
-            return DISK_THEMES[assigned_id]
-        if DISK_THEMES:
-            return next(iter(DISK_THEMES.values()))
-    return BUILTIN_PRESETS["p1"]
+            base_theme = dict(DISK_THEMES[assigned_id])
+        elif DISK_THEMES:
+            base_theme = dict(next(iter(DISK_THEMES.values())))
+        else:
+            base_theme = dict(BUILTIN_PRESETS["p1"])
+    else:
+        base_theme = dict(BUILTIN_PRESETS["p1"])
+
+    active_bg = CONFIG.get("active_bg_preset", "b1")
+    if active_bg != "b1":
+        base_theme["container_background"] = get_current_background()
+
+    return base_theme
 
 # --- AUTO-UPDATE PIPELINE ---
 def check_for_updates(parent_window):
@@ -353,14 +399,15 @@ HTML_PAGE = f"""<!DOCTYPE html>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     
     html, body {{
-      width: 100%;
-      height: 100%;
+      width: 100vw;
+      height: 100vh;
       background: #000000;
       overflow: hidden;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      transition: background 0.25s ease;
     }}
 
     #corner-brand {{
@@ -384,8 +431,6 @@ HTML_PAGE = f"""<!DOCTYPE html>
       justify-content: center;
       text-align: center;
       position: relative;
-      border-radius: 20px;
-      transition: background 0.3s ease;
     }}
 
     #projector-text {{
@@ -444,7 +489,9 @@ HTML_PAGE = f"""<!DOCTYPE html>
 
       textEl.style.textTransform = theme.text_transform || 'uppercase';
       textEl.style.letterSpacing = theme.letter_spacing || '0px';
-      container.style.background = theme.container_background || 'transparent';
+
+      const bg = theme.container_background || 'transparent';
+      document.body.style.background = (bg === 'transparent') ? '#000000' : bg;
 
       applyVisualState();
     }}
@@ -622,18 +669,19 @@ class OperatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title(f"bhaner Controller v{APP_VERSION}")
-        self.root.geometry("560x620")
-        self.root.minsize(520, 580)
+        self.root.geometry("560x670")
+        self.root.minsize(520, 630)
 
         self.last_pushed_text = ""
         self.is_zoomed = False
 
         self.preset_var = tk.StringVar(value=CONFIG.get("favorite_mode", "p1"))
         self.custom_slot_var = tk.StringVar(value=CONFIG.get("active_custom_slot", "slot_a"))
+        self.bg_preset_var = tk.StringVar(value=CONFIG.get("active_bg_preset", "b1"))
 
-        # Preset Radio Buttons Frame
-        preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=10)
-        preset_frame.pack(fill="x", padx=15, pady=6)
+        # --- 1. Visual Presets Frame ---
+        preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=8)
+        preset_frame.pack(fill="x", padx=15, pady=4)
 
         self.presets = [
             ("P1: Flame (Orange Stage)", "p1"),
@@ -649,12 +697,12 @@ class OperatorApp:
 
         for idx, (label, pid) in enumerate(self.presets):
             rb = ttk.Radiobutton(preset_grid, text=label, value=pid, variable=self.preset_var, command=self.on_preset_change)
-            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=3)
+            rb.grid(row=idx // 2, column=idx % 2, sticky="w", padx=6, pady=2)
             self.root.bind(f"<F{idx+1}>", lambda e, p=pid: self.set_preset(p))
 
         # Custom Options Sub-Panel
-        self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=8)
-        self.custom_box.pack(fill="x", pady=6)
+        self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=6)
+        self.custom_box.pack(fill="x", pady=4)
 
         slot_row = ttk.Frame(self.custom_box)
         slot_row.pack(fill="x", pady=2)
@@ -664,37 +712,72 @@ class OperatorApp:
             ttk.Radiobutton(slot_row, text=s_label, value=s_code, variable=self.custom_slot_var, command=self.on_slot_change).pack(side="left", padx=8)
 
         assign_row = ttk.Frame(self.custom_box)
-        assign_row.pack(fill="x", pady=4)
+        assign_row.pack(fill="x", pady=3)
 
         ttk.Label(assign_row, text="Theme:").pack(side="left", padx=4)
         self.theme_combo_var = tk.StringVar()
-        self.theme_combobox = ttk.Combobox(assign_row, textvariable=self.theme_combo_var, state="readonly", width=18)
+        self.theme_combobox = ttk.Combobox(assign_row, textvariable=self.theme_combo_var, state="readonly", width=16)
         self.theme_combobox.pack(side="left", padx=3)
 
         ttk.Button(assign_row, text="Assign", width=7, command=self.assign_theme_to_current_slot).pack(side="left", padx=2)
-        ttk.Button(assign_row, text="Import Font", width=12, command=self.import_google_font_dialog).pack(side="left", padx=2)
+        ttk.Button(assign_row, text="Import Font", width=11, command=self.import_google_font_dialog).pack(side="left", padx=2)
         ttk.Button(assign_row, text="Reload", width=7, command=self.reload_themes).pack(side="left", padx=2)
 
         # Favorite Bar
         fav_frame = ttk.Frame(preset_frame)
-        fav_frame.pack(fill="x", pady=4)
+        fav_frame.pack(fill="x", pady=3)
         self.fav_status_label = ttk.Label(fav_frame, text=self.get_fav_label(), font=("Segoe UI", 9, "bold"))
         self.fav_status_label.pack(side="left", padx=4)
 
         ttk.Button(fav_frame, text="Set as Default", command=self.save_as_favorite).pack(side="right", padx=4)
 
-        self.update_theme_combobox()
-        self.sync_active_slot_display()
+        # --- 2. Background Presets Frame (B1, B2, B3) ---
+        bg_frame = ttk.LabelFrame(root, text=" Background Presets (Hex / RGB / RGBA) ", padding=8)
+        bg_frame.pack(fill="x", padx=15, pady=4)
 
-        # Transmission Mode
-        self.mode_var = tk.StringVar(value="live")
-        mode_frame = ttk.LabelFrame(root, text=" Transmission Mode ", padding=8)
+        bg_row = ttk.Frame(bg_frame)
+        bg_row.pack(fill="x")
+
+        # B1 Default
+        ttk.Radiobutton(bg_row, text="B1: Transparent", value="b1", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=3)
+
+        # B2 Custom
+        ttk.Radiobutton(bg_row, text="B2:", value="b2", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=(10, 2))
+        self.b2_val_var = tk.StringVar(value=CONFIG.get("bg_presets", {}).get("b2", ""))
+        self.b2_entry = ttk.Entry(bg_row, textvariable=self.b2_val_var, width=13)
+        self.b2_entry.pack(side="left", padx=2)
+        self.b2_val_var.trace_add("write", lambda *args: self.on_bg_text_changed("b2", self.b2_val_var.get()))
+
+        # B3 Custom
+        ttk.Radiobutton(bg_row, text="B3:", value="b3", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=(10, 2))
+        self.b3_val_var = tk.StringVar(value=CONFIG.get("bg_presets", {}).get("b3", ""))
+        self.b3_entry = ttk.Entry(bg_row, textvariable=self.b3_val_var, width=13)
+        self.b3_entry.pack(side="left", padx=2)
+        self.b3_val_var.trace_add("write", lambda *args: self.on_bg_text_changed("b3", self.b3_val_var.get()))
+
+        # --- 3. Transmission Mode & Fast Clear ---
+        mode_frame = ttk.LabelFrame(root, text=" Transmission Mode & Fast Clear ", padding=8)
         mode_frame.pack(fill="x", padx=15, pady=4)
 
-        ttk.Radiobutton(mode_frame, text="Live Mode (Keystrokes update in real time)", value="live", variable=self.mode_var, command=self.on_mode_change).pack(anchor="w", pady=2)
-        ttk.Radiobutton(mode_frame, text="Batch Mode (Enter to push | 2nd Enter to punch)", value="batch", variable=self.mode_var, command=self.on_mode_change).pack(anchor="w", pady=2)
+        mode_row = ttk.Frame(mode_frame)
+        mode_row.pack(fill="x")
 
-        # Content Input
+        self.mode_var = tk.StringVar(value="live")
+        ttk.Radiobutton(mode_row, text="Live Mode", value="live", variable=self.mode_var, command=self.on_mode_change).pack(side="left", padx=4)
+        ttk.Radiobutton(mode_row, text="Batch Mode", value="batch", variable=self.mode_var, command=self.on_mode_change).pack(side="left", padx=8)
+
+        # Interactive Key Binder UI
+        ttk.Label(mode_row, text="|  Clear Hotkey:").pack(side="left", padx=(10, 4))
+
+        self.current_bound_key = CONFIG.get("clear_hotkey", "Shift_R")
+        self.is_recording_key = False
+
+        self.bind_btn = ttk.Button(mode_row, text=self.format_key_name(self.current_bound_key), width=14, command=self.start_key_recording)
+        self.bind_btn.pack(side="left", padx=2)
+
+        self.bind_clear_hotkey(self.current_bound_key)
+
+        # --- 4. Content Input ---
         input_frame = ttk.LabelFrame(root, text=" Screen Content ", padding=8)
         input_frame.pack(fill="both", expand=True, padx=15, pady=4)
 
@@ -711,13 +794,85 @@ class OperatorApp:
         self.push_btn = ttk.Button(btn_frame, text="Push Content (Enter)", command=self.push_batch_content)
         self.push_btn.pack(side="left", padx=4)
 
-        ttk.Button(btn_frame, text="Clear Screen", command=self.clear_all).pack(side="left", padx=4)
+        self.clear_btn = ttk.Button(btn_frame, text=f"Clear Screen ({self.format_key_name(self.current_bound_key)})", command=self.clear_all)
+        self.clear_btn.pack(side="left", padx=4)
+
         ttk.Button(btn_frame, text="Re-open Window", command=self.open_browser).pack(side="right", padx=4)
         ttk.Button(btn_frame, text="Sessions", command=self.open_sessions_folder).pack(side="right", padx=4)
+
+        self.update_theme_combobox()
+        self.sync_active_slot_display()
 
         self.root.after(700, self.open_browser)
         check_for_updates(self.root)
 
+    # --- Interactive Key Binding UI ---
+    def format_key_name(self, raw_key: str) -> str:
+        key_map = {
+            "Shift_R": "Right Shift",
+            "Shift_L": "Left Shift",
+            "Control_R": "Right Ctrl",
+            "Control_L": "Left Ctrl",
+            "Escape": "Escape",
+            "Delete": "Delete",
+            "BackSpace": "Backspace"
+        }
+        return key_map.get(raw_key, raw_key)
+
+    def start_key_recording(self):
+        self.is_recording_key = True
+        self.bind_btn.config(text="[Press Any Key]")
+        self.root.bind("<KeyPress>", self.record_key_event)
+
+    def record_key_event(self, event):
+        if not self.is_recording_key:
+            return
+        self.is_recording_key = False
+        self.root.unbind("<KeyPress>")
+
+        captured_key = event.keysym
+        self.bind_clear_hotkey(captured_key)
+
+        CONFIG["clear_hotkey"] = captured_key
+        save_config(CONFIG)
+
+        friendly_name = self.format_key_name(captured_key)
+        self.bind_btn.config(text=friendly_name)
+        self.clear_btn.config(text=f"Clear Screen ({friendly_name})")
+        log_session_event("HOTKEY_REBOUND", extra=f"Clear: {captured_key}")
+
+    def bind_clear_hotkey(self, key_name: str):
+        if not key_name:
+            return
+        if hasattr(self, "current_bound_key") and self.current_bound_key:
+            try:
+                self.root.unbind(f"<{self.current_bound_key}>")
+            except Exception:
+                pass
+
+        try:
+            self.root.bind(f"<{key_name}>", lambda e: self.clear_all())
+            self.current_bound_key = key_name
+        except Exception:
+            self.root.bind("<Shift_R>", lambda e: self.clear_all())
+            self.current_bound_key = "Shift_R"
+
+    # --- Live Background Handlers ---
+    def on_bg_text_changed(self, preset_key: str, raw_val: str):
+        cleaned = sanitize_color_input(raw_val)
+        CONFIG.setdefault("bg_presets", {})[preset_key] = cleaned
+        save_config(CONFIG)
+        if self.bg_preset_var.get() == preset_key:
+            self.on_preset_change()
+
+    def on_bg_preset_change(self):
+        active_preset = self.bg_preset_var.get()
+        CONFIG["active_bg_preset"] = active_preset
+        save_config(CONFIG)
+        self.on_preset_change()
+        log_session_event("BG_PRESET_CHANGE", extra=f"Preset: {active_preset}")
+
+    # --- Preset & Display Handlers ---
     def get_fav_label(self) -> str:
         mode = CONFIG.get("favorite_mode", "p1")
         if mode == "custom":
