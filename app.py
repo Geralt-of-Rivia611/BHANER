@@ -12,6 +12,7 @@ import urllib.request
 import urllib.parse
 import subprocess
 import re
+import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import tkinter as tk
 from tkinter import ttk
@@ -19,10 +20,10 @@ import tkinter.messagebox as mb
 import tkinter.simpledialog as sd
 
 # --- APP CONFIGURATION ---
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "Geralt-of-Rivia611/BHANER"
 
-# Determine permanent app folder: use LocalAppData on Windows so files never clutter Downloads
+# Permanent AppData path to prevent polluting the Downloads directory
 if sys.platform == "win32":
     APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "bhaner")
 else:
@@ -32,9 +33,37 @@ os.makedirs(APP_DIR, exist_ok=True)
 CONFIG_FILE = os.path.join(APP_DIR, "bhaner_config.json")
 THEMES_DIR = os.path.join(APP_DIR, "themes")
 FONTS_DIR = os.path.join(THEMES_DIR, "fonts")
-os.makedirs(FONTS_DIR, exist_ok=True)
+SESSIONS_DIR = os.path.join(APP_DIR, "sessions")
 
-# Generate README.md in app directory
+os.makedirs(FONTS_DIR, exist_ok=True)
+os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+# Generate unique session file for this launch
+SESSION_FILENAME = os.path.join(
+    SESSIONS_DIR, 
+    f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+)
+
+def log_session_event(action: str, content: str = "", extra: str = ""):
+    """Appends an event to the session file with minimal disk I/O overhead."""
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_line = f"[{timestamp}] [{action.upper()}]"
+        if extra:
+            log_line += f" ({extra})"
+        if content:
+            sanitized = content.replace("\r", "").replace("\n", " \\n ")
+            log_line += f" -> {sanitized}"
+        log_line += "\n"
+
+        with open(SESSION_FILENAME, "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception:
+        pass
+
+log_session_event("SESSION_START", f"bhaner v{APP_VERSION} initialized")
+
+# Generate README in AppData if missing
 README_FILE = os.path.join(APP_DIR, "README.txt")
 if not os.path.exists(README_FILE):
     try:
@@ -44,14 +73,15 @@ if not os.path.exists(README_FILE):
 Directory: {APP_DIR}
 
 Folder Structure:
-- themes/       : Put custom JSON themes here or use "Import Font" in the app.
-- themes/fonts/ : Put local offline .ttf or .otf files here.
-- bhaner_config.json: Holds your saved defaults and Slot A/B/C assignments.
+- themes/       : Custom JSON theme files.
+- themes/fonts/ : Local offline font files (.ttf / .otf).
+- sessions/     : Automatic text logs of every show run.
+- bhaner_config.json: Saved defaults and Slot A/B/C assignments.
 
 Quick Keys:
 - F1 to F5 : Built-in Visual Presets
 - F6       : Custom Theme Slots (Slot A / B / C)
-- Enter    : Push Batch Text (or Zoom Punch on 2nd hit)
+- Enter    : Push Batch Text (or Zoom Punch on 2nd press)
 """)
     except Exception:
         pass
@@ -626,7 +656,6 @@ class OperatorApp:
         self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=8)
         self.custom_box.pack(fill="x", pady=6)
 
-        # Slot selector radio row
         slot_row = ttk.Frame(self.custom_box)
         slot_row.pack(fill="x", pady=2)
 
@@ -634,7 +663,6 @@ class OperatorApp:
         for s_code, s_label in [("slot_a", "Slot A"), ("slot_b", "Slot B"), ("slot_c", "Slot C")]:
             ttk.Radiobutton(slot_row, text=s_label, value=s_code, variable=self.custom_slot_var, command=self.on_slot_change).pack(side="left", padx=8)
 
-        # File assignment & Import row
         assign_row = ttk.Frame(self.custom_box)
         assign_row.pack(fill="x", pady=4)
 
@@ -685,6 +713,7 @@ class OperatorApp:
 
         ttk.Button(btn_frame, text="Clear Screen", command=self.clear_all).pack(side="left", padx=4)
         ttk.Button(btn_frame, text="Re-open Window", command=self.open_browser).pack(side="right", padx=4)
+        ttk.Button(btn_frame, text="Sessions", command=self.open_sessions_folder).pack(side="right", padx=4)
 
         self.root.after(700, self.open_browser)
         check_for_updates(self.root)
@@ -717,6 +746,7 @@ class OperatorApp:
 
     def on_preset_change(self):
         theme = resolve_theme(self.preset_var.get(), self.custom_slot_var.get())
+        log_session_event("PRESET_CHANGE", extra=f"Active: {self.preset_var.get()} ({theme.get('name')})")
         broadcast_payload({"theme": theme})
 
     def on_slot_change(self):
@@ -744,7 +774,6 @@ class OperatorApp:
             return
         url = url.strip()
 
-        # Extract family name from URL
         match = re.search(r'family=([^:&]+)', url)
         raw_name = match.group(1).replace('+', ' ') if match else "CustomFont"
 
@@ -778,7 +807,6 @@ class OperatorApp:
             json.dump(new_theme, f, indent=2)
 
         self.reload_themes()
-        # Automatically assign to current custom slot
         slot = self.custom_slot_var.get()
         CONFIG.setdefault("slots", {})[slot] = slug
         save_config(CONFIG)
@@ -786,6 +814,7 @@ class OperatorApp:
         self.sync_active_slot_display()
         self.on_preset_change()
 
+        log_session_event("FONT_IMPORTED", display_name, f"Assigned to {slot.upper()}")
         mb.showinfo("Font Imported", f"Theme '{display_name}' created and assigned to {slot.upper()}!")
 
     def reload_themes(self):
@@ -796,17 +825,27 @@ class OperatorApp:
         if self.preset_var.get() == "custom":
             self.on_preset_change()
 
+    def open_sessions_folder(self):
+        if sys.platform == 'win32':
+            os.startfile(SESSIONS_DIR)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', SESSIONS_DIR])
+        else:
+            subprocess.Popen(['xdg-open', SESSIONS_DIR])
+
     def save_as_favorite(self):
         CONFIG["favorite_mode"] = self.preset_var.get()
         CONFIG["active_custom_slot"] = self.custom_slot_var.get()
         save_config(CONFIG)
         self.fav_status_label.config(text=self.get_fav_label())
+        log_session_event("SAVED_FAVORITE", extra=self.get_fav_label())
 
     def open_browser(self):
         webbrowser.open(f"http://127.0.0.1:{ACTIVE_PORT}")
 
     def on_mode_change(self):
         self.is_zoomed = False
+        log_session_event("MODE_SWITCH", extra=self.mode_var.get().upper())
         if self.mode_var.get() == "live":
             self.sync_live_text()
 
@@ -819,6 +858,9 @@ class OperatorApp:
     def sync_live_text(self):
         content = self.text_input.get("1.0", "end-1c").strip()
         broadcast_payload({"text": content, "zoom": False})
+        if content != self.last_pushed_text:
+            self.last_pushed_text = content
+            log_session_event("LIVE_STREAM", content)
 
     def on_return_pressed(self, event):
         if self.mode_var.get() == "batch":
@@ -829,9 +871,12 @@ class OperatorApp:
         content = self.text_input.get("1.0", "end-1c").strip()
         if content and content == self.last_pushed_text:
             self.is_zoomed = not self.is_zoomed
+            log_session_event("PUNCH_TOGGLE", content, f"Zoom: {self.is_zoomed}")
         else:
             self.is_zoomed = False
             self.last_pushed_text = content
+            mode = self.preset_var.get()
+            log_session_event("PUSH", content, f"Preset: {mode}")
 
         broadcast_payload({"text": content, "zoom": self.is_zoomed})
 
@@ -839,6 +884,7 @@ class OperatorApp:
         self.text_input.delete("1.0", tk.END)
         self.last_pushed_text = ""
         self.is_zoomed = False
+        log_session_event("CLEAR_SCREEN")
         broadcast_payload({"text": "", "zoom": False})
 
 if __name__ == "__main__":
