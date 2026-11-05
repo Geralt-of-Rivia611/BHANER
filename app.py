@@ -20,10 +20,9 @@ import tkinter.messagebox as mb
 import tkinter.simpledialog as sd
 
 # --- APP CONFIGURATION ---
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 GITHUB_REPO = "Geralt-of-Rivia611/BHANER"
 
-# Permanent AppData path
 if sys.platform == "win32":
     APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "bhaner")
 else:
@@ -38,14 +37,12 @@ SESSIONS_DIR = os.path.join(APP_DIR, "sessions")
 os.makedirs(FONTS_DIR, exist_ok=True)
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
-# Generate unique session file for this launch
 SESSION_FILENAME = os.path.join(
     SESSIONS_DIR, 
     f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 )
 
 def log_session_event(action: str, content: str = "", extra: str = ""):
-    """Appends an event to the session file with minimal disk I/O overhead."""
     try:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_line = f"[{timestamp}] [{action.upper()}]"
@@ -63,31 +60,7 @@ def log_session_event(action: str, content: str = "", extra: str = ""):
 
 log_session_event("SESSION_START", f"bhaner v{APP_VERSION} initialized")
 
-# Generate README in AppData if missing
-README_FILE = os.path.join(APP_DIR, "README.txt")
-if not os.path.exists(README_FILE):
-    try:
-        with open(README_FILE, "w", encoding="utf-8") as f:
-            f.write(f"""=== bhaner Live Stage Projection Controller v{APP_VERSION} ===
-
-Directory: {APP_DIR}
-
-Folder Structure:
-- themes/       : Custom JSON theme files.
-- themes/fonts/ : Local offline font files (.ttf / .otf).
-- sessions/     : Automatic text logs of every show run.
-- bhaner_config.json: Saved defaults, hotkeys, and custom background presets.
-
-Quick Keys:
-- F1 to F5     : Built-in Visual Presets
-- F6           : Custom Theme Slots (Slot A / B / C)
-- Right Shift  : Instant Clear Screen (rebindable in settings)
-- Enter        : Push Batch Text (or Zoom Punch on 2nd press)
-""")
-    except Exception:
-        pass
-
-# 5 Built-in Core Presets
+# Core Themes
 BUILTIN_PRESETS = {
     "p1": {
         "id": "p1",
@@ -176,34 +149,6 @@ BUILTIN_PRESETS = {
     }
 }
 
-def ensure_custom_template():
-    tpl_path = os.path.join(THEMES_DIR, "custom_template.json")
-    if not os.path.exists(tpl_path):
-        example_theme = {
-            "id": "festival_gold",
-            "name": "Festival Neon Gold",
-            "font_family": "'Impact', sans-serif",
-            "google_font_url": "",
-            "font_file": "",
-            "text_transform": "uppercase",
-            "letter_spacing": "2px",
-            "text_color": "#FFD700",
-            "text_shadow": "-4px -4px 0 #000, 4px -4px 0 #000, 0 0 35px #FFA500",
-            "container_background": "transparent",
-            "impact_zoom": {
-                "scale": 1.2,
-                "text_color": "#FFFFFF",
-                "text_shadow": "0 0 40px #FFF, 0 0 70px #FFD700"
-            }
-        }
-        try:
-            with open(tpl_path, "w", encoding="utf-8") as f:
-                json.dump(example_theme, f, indent=2)
-        except Exception:
-            pass
-
-ensure_custom_template()
-
 def load_theme_files() -> dict[str, dict]:
     themes = {}
     if os.path.exists(THEMES_DIR):
@@ -236,7 +181,9 @@ def load_config() -> dict:
             "b1": "transparent",
             "b2": "",
             "b3": ""
-        }
+        },
+        "burst_mode": "single",
+        "burst_bpm": 130
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -257,23 +204,17 @@ def save_config(cfg: dict):
 CONFIG = load_config()
 
 def sanitize_color_input(raw: str) -> str:
-    """Intelligently detects and normalizes Hex, raw RGB numbers, rgb(), rgba(), and gradients."""
     s = raw.strip()
     if not s:
         return ""
-
-    # Check if user entered raw numbers like "255, 0, 128" or "255 0 128"
     nums = re.findall(r'[-+]?[0-9]*\.?[0-9]+', s)
     if len(nums) == 3 and not s.lower().startswith(('rgb', 'hsl', '#')):
         return f"rgb({nums[0]}, {nums[1]}, {nums[2]})"
     elif len(nums) == 4 and not s.lower().startswith(('rgba', 'hsl', '#')):
         return f"rgba({nums[0]}, {nums[1]}, {nums[2]}, {nums[3]})"
-
-    # Hex without # (3, 4, 6, 8 hex digits)
     if re.fullmatch(r'[0-9a-fA-F]{3,8}', s):
         if len(s) in (3, 4, 6, 8):
             return f"#{s}"
-
     return s
 
 def get_current_background() -> str:
@@ -305,65 +246,6 @@ def resolve_theme(mode: str, custom_slot: str) -> dict:
 
     return base_theme
 
-# --- AUTO-UPDATE PIPELINE ---
-def check_for_updates(parent_window):
-    def worker():
-        try:
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            req = urllib.request.Request(url, headers={"User-Agent": "bhaner-updater"})
-            with urllib.request.urlopen(req, timeout=4) as resp:
-                data = json.loads(resp.read().decode())
-            
-            latest_tag = data.get("tag_name", "").lstrip("v")
-            if not latest_tag:
-                return
-
-            def parse_ver(v):
-                return tuple(map(int, (v.split('.'))))
-
-            if parse_ver(latest_tag) > parse_ver(APP_VERSION):
-                exe_url = None
-                for asset in data.get("assets", []):
-                    if asset["name"].endswith(".exe"):
-                        exe_url = asset["browser_download_url"]
-                        break
-                if exe_url:
-                    parent_window.after(0, lambda: prompt_update(latest_tag, exe_url))
-        except Exception:
-            pass
-    threading.Thread(target=worker, daemon=True).start()
-
-def prompt_update(new_version, download_url):
-    answer = mb.askyesno(
-        "Update Available", 
-        f"A new version of bhaner (v{new_version}) is available!\n\nWould you like to download and update now?"
-    )
-    if answer:
-        threading.Thread(target=perform_update, args=(download_url,), daemon=True).start()
-
-def perform_update(download_url):
-    try:
-        current_exe = sys.executable
-        if not current_exe.endswith(".exe"):
-            return
-        new_exe = current_exe.replace(".exe", "_new.exe")
-        urllib.request.urlretrieve(download_url, new_exe)
-
-        updater_bat = os.path.join(os.path.dirname(current_exe), "update_bhaner.bat")
-        with open(updater_bat, "w") as f:
-            f.write(f"""@echo off
-timeout /t 1 /nobreak >nul
-del "{current_exe}"
-move "{new_exe}" "{current_exe}"
-start "" "{current_exe}"
-del "%~f0"
-""")
-        subprocess.Popen([updater_bat], shell=True)
-        os._exit(0)
-    except Exception as e:
-        mb.showerror("Update Error", f"Failed to complete update:\n{e}")
-
-# --- SERVER & PORT ---
 def find_free_port(preferred: int = 8000) -> int:
     for p in [preferred, 8080, 8888, 5000, 0]:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -382,7 +264,9 @@ current_custom_slot = CONFIG.get("active_custom_slot", "slot_a")
 current_state = {
     "text": "",
     "zoom": False,
-    "theme": resolve_theme(current_mode, current_custom_slot)
+    "theme": resolve_theme(current_mode, current_custom_slot),
+    "burst_mode": CONFIG.get("burst_mode", "single"),
+    "burst_bpm": CONFIG.get("burst_bpm", 130)
 }
 state_lock = threading.Lock()
 clients_queues = set()
@@ -439,7 +323,51 @@ HTML_PAGE = f"""<!DOCTYPE html>
       white-space: pre-wrap;
       max-width: 100%;
       transform-origin: center center;
-      transition: transform 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275), color 0.2s ease, text-shadow 0.2s ease;
+      transition: transform 0.12s ease-out, color 0.15s ease, text-shadow 0.15s ease;
+    }}
+
+    #mic-perm-banner {{
+      position: absolute;
+      bottom: 15px;
+      padding: 8px 16px;
+      background: rgba(255, 98, 0, 0.25);
+      border: 1px solid #FF6200;
+      color: #FFF;
+      font-family: sans-serif;
+      font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: none;
+      z-index: 999;
+    }}
+
+    /* CSS Keyframe Burst Patterns */
+    @keyframes strobeAnim {{
+      0%, 100% {{ transform: scale(1.0); }}
+      50% {{ transform: scale(var(--burst-scale, 1.2)); }}
+    }}
+
+    @keyframes breatheAnim {{
+      0%, 100% {{ transform: scale(0.96); filter: brightness(0.9); }}
+      50% {{ transform: scale(var(--burst-scale, 1.2)); filter: brightness(1.25); }}
+    }}
+
+    @keyframes heartbeatAnim {{
+      0%, 100% {{ transform: scale(1.0); }}
+      15% {{ transform: scale(var(--burst-scale, 1.22)); }}
+      30% {{ transform: scale(1.05); }}
+      45% {{ transform: scale(calc(var(--burst-scale, 1.22) * 1.08)); }}
+      60% {{ transform: scale(1.0); }}
+    }}
+
+    .anim-strobe {{
+      animation: strobeAnim var(--burst-period, 0.46s) infinite ease-in-out;
+    }}
+    .anim-breathe {{
+      animation: breatheAnim var(--burst-period, 1.84s) infinite ease-in-out;
+    }}
+    .anim-heartbeat {{
+      animation: heartbeatAnim var(--burst-period, 0.92s) infinite cubic-bezier(0.215, 0.61, 0.355, 1);
     }}
   </style>
 </head>
@@ -456,14 +384,26 @@ HTML_PAGE = f"""<!DOCTYPE html>
     <div id="projector-text"></div>
   </div>
 
+  <div id="mic-perm-banner" onclick="initMic()">🎤 Click to Enable Live Venue Mic Pulse</div>
+
   <script>
     const textEl = document.getElementById('projector-text');
     const container = document.getElementById('display-container');
     const googleFontLink = document.getElementById('google-font-link');
     const dynamicFontFace = document.getElementById('dynamic-font-face');
+    const micBanner = document.getElementById('mic-perm-banner');
 
     let activeTheme = {{}};
     let isZoomed = false;
+    let burstMode = 'single';
+    let burstBpm = 130;
+
+    // Web Audio State
+    let audioCtx = null;
+    let analyser = null;
+    let dataArray = null;
+    let micStream = null;
+    let micAnimationId = null;
 
     function applyTheme(theme) {{
       activeTheme = theme;
@@ -496,18 +436,93 @@ HTML_PAGE = f"""<!DOCTYPE html>
       applyVisualState();
     }}
 
+    function clearAnimations() {{
+      textEl.classList.remove('anim-strobe', 'anim-breathe', 'anim-heartbeat');
+      if (micAnimationId) {{
+        cancelAnimationFrame(micAnimationId);
+        micAnimationId = null;
+      }}
+    }}
+
     function applyVisualState() {{
       if (!activeTheme || !activeTheme.text_color) return;
 
-      if (isZoomed && activeTheme.impact_zoom) {{
-        textEl.style.transform = `scale(${{activeTheme.impact_zoom.scale || 1.18}})`;
-        textEl.style.color = activeTheme.impact_zoom.text_color || activeTheme.text_color;
-        textEl.style.textShadow = activeTheme.impact_zoom.text_shadow || activeTheme.text_shadow;
-      }} else {{
+      clearAnimations();
+
+      if (!isZoomed) {{
         textEl.style.transform = 'scale(1.0)';
         textEl.style.color = activeTheme.text_color;
         textEl.style.textShadow = activeTheme.text_shadow;
+        micBanner.style.display = 'none';
+        return;
       }}
+
+      // Zoom punch is Active: compute period from BPM
+      const periodSec = 60 / Math.max(40, Math.min(240, burstBpm));
+      const targetScale = (activeTheme.impact_zoom && activeTheme.impact_zoom.scale) ? activeTheme.impact_zoom.scale : 1.2;
+      
+      textEl.style.setProperty('--burst-scale', targetScale);
+      textEl.style.color = (activeTheme.impact_zoom && activeTheme.impact_zoom.text_color) || activeTheme.text_color;
+      textEl.style.textShadow = (activeTheme.impact_zoom && activeTheme.impact_zoom.text_shadow) || activeTheme.text_shadow;
+
+      if (burstMode === 'strobe') {{
+        textEl.style.setProperty('--burst-period', periodSec + 's');
+        textEl.classList.add('anim-strobe');
+      }} else if (burstMode === 'breathe') {{
+        textEl.style.setProperty('--burst-period', (periodSec * 4) + 's');
+        textEl.classList.add('anim-breathe');
+      }} else if (burstMode === 'heartbeat') {{
+        textEl.style.setProperty('--burst-period', (periodSec * 2) + 's');
+        textEl.classList.add('anim-heartbeat');
+      }} else if (burstMode === 'mic') {{
+        if (!audioCtx) {{
+          micBanner.style.display = 'block';
+        }} else {{
+          startMicPulse(targetScale);
+        }}
+      }} else {{
+        // 'single' / default static punch
+        textEl.style.transform = `scale(${{targetScale}})`;
+      }}
+    }}
+
+    async function initMic() {{
+      try {{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        micStream = await navigator.mediaDevices.getUserMedia({{ audio: true, video: false }});
+        const source = audioCtx.createMediaStreamSource(micStream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        micBanner.style.display = 'none';
+        applyVisualState();
+      }} catch (err) {{
+        alert("Microphone access unavailable or denied: " + err.message);
+      }}
+    }}
+
+    function startMicPulse(maxScale) {{
+      if (!analyser || !dataArray) return;
+
+      function renderFrame() {{
+        if (!isZoomed || burstMode !== 'mic') return;
+        analyser.getByteFrequencyData(dataArray);
+
+        // Sub-bass & low mids focus (bins 1 to 8: roughly 30Hz - 250Hz)
+        let lowEnergy = 0;
+        const bins = 8;
+        for (let i = 1; i <= bins; i++) {{
+          lowEnergy += dataArray[i];
+        }}
+        const avg = lowEnergy / bins; // 0 to 255
+        const norm = Math.min(1.0, Math.max(0.0, (avg - 30) / 180)); // threshold floor
+        const dynamicScale = 1.0 + norm * (maxScale - 1.0);
+
+        textEl.style.transform = `scale(${{dynamicScale.toFixed(3)}})`;
+        micAnimationId = requestAnimationFrame(renderFrame);
+      }}
+      renderFrame();
     }}
 
     function autoFitText() {{
@@ -539,6 +554,9 @@ HTML_PAGE = f"""<!DOCTYPE html>
     }}
 
     function handlePayload(data) {{
+      if (data.burst_mode !== undefined) burstMode = data.burst_mode;
+      if (data.burst_bpm !== undefined) burstBpm = data.burst_bpm;
+
       if (data.theme) {{
         applyTheme(data.theme);
       }}
@@ -648,12 +666,8 @@ class RobustServerHandler(BaseHTTPRequestHandler):
 
 def broadcast_payload(payload: dict):
     with state_lock:
-        if "text" in payload:
-            current_state["text"] = payload["text"]
-        if "zoom" in payload:
-            current_state["zoom"] = payload["zoom"]
-        if "theme" in payload:
-            current_state["theme"] = payload["theme"]
+        for k, v in payload.items():
+            current_state[k] = v
 
     msg = json.dumps(current_state)
     with clients_lock:
@@ -669,8 +683,8 @@ class OperatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title(f"bhaner Controller v{APP_VERSION}")
-        self.root.geometry("560x670")
-        self.root.minsize(520, 630)
+        self.root.geometry("570x740")
+        self.root.minsize(530, 680)
 
         self.last_pushed_text = ""
         self.is_zoomed = False
@@ -681,7 +695,7 @@ class OperatorApp:
 
         # --- 1. Visual Presets Frame ---
         preset_frame = ttk.LabelFrame(root, text=" Visual Presets (Quick-Switch: F1 - F6) ", padding=8)
-        preset_frame.pack(fill="x", padx=15, pady=4)
+        preset_frame.pack(fill="x", padx=15, pady=3)
 
         self.presets = [
             ("P1: Flame (Orange Stage)", "p1"),
@@ -702,7 +716,7 @@ class OperatorApp:
 
         # Custom Options Sub-Panel
         self.custom_box = ttk.LabelFrame(preset_frame, text=" Custom Preset Configuration (Slot A / B / C) ", padding=6)
-        self.custom_box.pack(fill="x", pady=4)
+        self.custom_box.pack(fill="x", pady=3)
 
         slot_row = ttk.Frame(self.custom_box)
         slot_row.pack(fill="x", pady=2)
@@ -723,41 +737,86 @@ class OperatorApp:
         ttk.Button(assign_row, text="Import Font", width=11, command=self.import_google_font_dialog).pack(side="left", padx=2)
         ttk.Button(assign_row, text="Reload", width=7, command=self.reload_themes).pack(side="left", padx=2)
 
-        # Favorite Bar
         fav_frame = ttk.Frame(preset_frame)
-        fav_frame.pack(fill="x", pady=3)
+        fav_frame.pack(fill="x", pady=2)
         self.fav_status_label = ttk.Label(fav_frame, text=self.get_fav_label(), font=("Segoe UI", 9, "bold"))
         self.fav_status_label.pack(side="left", padx=4)
 
         ttk.Button(fav_frame, text="Set as Default", command=self.save_as_favorite).pack(side="right", padx=4)
 
-        # --- 2. Background Presets Frame (B1, B2, B3) ---
+        # --- 2. Burst Patterns & Therapeutic Rave Engine ---
+        burst_frame = ttk.LabelFrame(root, text=" Rave Burst Pattern (Double-Tap Punch) ", padding=8)
+        burst_frame.pack(fill="x", padx=15, pady=3)
+
+        burst_row = ttk.Frame(burst_frame)
+        burst_row.pack(fill="x")
+
+        ttk.Label(burst_row, text="Pattern:").pack(side="left", padx=4)
+
+        self.burst_options = [
+            ("Single Impact (Off)", "single"),
+            ("BPM Strobe (High Rave)", "strobe"),
+            ("Hypnotic Breathe (Therapeutic)", "breathe"),
+            ("Shamanic Heartbeat (Grounding)", "heartbeat"),
+            ("Live Mic / Audio Pulse", "mic")
+        ]
+        self.burst_var = tk.StringVar(value=CONFIG.get("burst_mode", "single"))
+        self.burst_combo = ttk.Combobox(
+            burst_row, 
+            values=[opt[0] for opt in self.burst_options], 
+            state="readonly", 
+            width=26
+        )
+        # Match initial index
+        init_idx = 0
+        for i, opt in enumerate(self.burst_options):
+            if opt[1] == self.burst_var.get():
+                init_idx = i
+                break
+        self.burst_combo.current(init_idx)
+        self.burst_combo.pack(side="left", padx=4)
+        self.burst_combo.bind("<<ComboboxSelected>>", self.on_burst_selected)
+
+        # Tempo / BPM Dial
+        ttk.Label(burst_row, text="|  Tempo:").pack(side="left", padx=(10, 4))
+        self.bpm_var = tk.IntVar(value=CONFIG.get("burst_bpm", 130))
+        self.bpm_label = ttk.Label(burst_row, text=f"{self.bpm_var.get()} BPM", width=8)
+        self.bpm_label.pack(side="right", padx=2)
+
+        self.bpm_scale = ttk.Scale(
+            burst_row, 
+            from_=60, 
+            to_=180, 
+            variable=self.bpm_var, 
+            orient="horizontal", 
+            command=self.on_bpm_change
+        )
+        self.bpm_scale.pack(side="right", fill="x", expand=True, padx=4)
+
+        # --- 3. Background Presets Frame (B1, B2, B3) ---
         bg_frame = ttk.LabelFrame(root, text=" Background Presets (Hex / RGB / RGBA) ", padding=8)
-        bg_frame.pack(fill="x", padx=15, pady=4)
+        bg_frame.pack(fill="x", padx=15, pady=3)
 
         bg_row = ttk.Frame(bg_frame)
         bg_row.pack(fill="x")
 
-        # B1 Default
         ttk.Radiobutton(bg_row, text="B1: Transparent", value="b1", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=3)
 
-        # B2 Custom
         ttk.Radiobutton(bg_row, text="B2:", value="b2", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=(10, 2))
         self.b2_val_var = tk.StringVar(value=CONFIG.get("bg_presets", {}).get("b2", ""))
         self.b2_entry = ttk.Entry(bg_row, textvariable=self.b2_val_var, width=13)
         self.b2_entry.pack(side="left", padx=2)
         self.b2_val_var.trace_add("write", lambda *args: self.on_bg_text_changed("b2", self.b2_val_var.get()))
 
-        # B3 Custom
         ttk.Radiobutton(bg_row, text="B3:", value="b3", variable=self.bg_preset_var, command=self.on_bg_preset_change).pack(side="left", padx=(10, 2))
         self.b3_val_var = tk.StringVar(value=CONFIG.get("bg_presets", {}).get("b3", ""))
         self.b3_entry = ttk.Entry(bg_row, textvariable=self.b3_val_var, width=13)
         self.b3_entry.pack(side="left", padx=2)
         self.b3_val_var.trace_add("write", lambda *args: self.on_bg_text_changed("b3", self.b3_val_var.get()))
 
-        # --- 3. Transmission Mode & Fast Clear ---
+        # --- 4. Transmission Mode & Fast Clear ---
         mode_frame = ttk.LabelFrame(root, text=" Transmission Mode & Fast Clear ", padding=8)
-        mode_frame.pack(fill="x", padx=15, pady=4)
+        mode_frame.pack(fill="x", padx=15, pady=3)
 
         mode_row = ttk.Frame(mode_frame)
         mode_row.pack(fill="x")
@@ -766,7 +825,6 @@ class OperatorApp:
         ttk.Radiobutton(mode_row, text="Live Mode", value="live", variable=self.mode_var, command=self.on_mode_change).pack(side="left", padx=4)
         ttk.Radiobutton(mode_row, text="Batch Mode", value="batch", variable=self.mode_var, command=self.on_mode_change).pack(side="left", padx=8)
 
-        # Interactive Key Binder UI
         ttk.Label(mode_row, text="|  Clear Hotkey:").pack(side="left", padx=(10, 4))
 
         self.current_bound_key = CONFIG.get("clear_hotkey", "Shift_R")
@@ -777,9 +835,9 @@ class OperatorApp:
 
         self.bind_clear_hotkey(self.current_bound_key)
 
-        # --- 4. Content Input ---
+        # --- 5. Content Input ---
         input_frame = ttk.LabelFrame(root, text=" Screen Content ", padding=8)
-        input_frame.pack(fill="both", expand=True, padx=15, pady=4)
+        input_frame.pack(fill="both", expand=True, padx=15, pady=3)
 
         self.text_input = tk.Text(input_frame, wrap="word", font=("Segoe UI", 12), height=4)
         self.text_input.pack(fill="both", expand=True)
@@ -804,7 +862,32 @@ class OperatorApp:
         self.sync_active_slot_display()
 
         self.root.after(700, self.open_browser)
-        check_for_updates(self.root)
+
+    # --- Burst Handlers ---
+    def on_burst_selected(self, event=None):
+        idx = self.burst_combo.current()
+        mode_code = self.burst_options[idx][1]
+        self.burst_var.set(mode_code)
+        CONFIG["burst_mode"] = mode_code
+        save_config(CONFIG)
+
+        # Disable slider if mic is active
+        if mode_code == "mic":
+            self.bpm_scale.state(["disabled"])
+            self.bpm_label.config(text="Live Mic")
+        else:
+            self.bpm_scale.state(["!disabled"])
+            self.bpm_label.config(text=f"{int(self.bpm_var.get())} BPM")
+
+        broadcast_payload({"burst_mode": mode_code, "burst_bpm": int(self.bpm_var.get())})
+        log_session_event("BURST_MODE_CHANGE", extra=f"{mode_code} @ {int(self.bpm_var.get())} BPM")
+
+    def on_bpm_change(self, val):
+        bpm = int(float(val))
+        self.bpm_label.config(text=f"{bpm} BPM")
+        broadcast_payload({"burst_bpm": bpm})
+        CONFIG["burst_bpm"] = bpm
+        save_config(CONFIG)
 
     # --- Interactive Key Binding UI ---
     def format_key_name(self, raw_key: str) -> str:
@@ -1026,14 +1109,19 @@ class OperatorApp:
         content = self.text_input.get("1.0", "end-1c").strip()
         if content and content == self.last_pushed_text:
             self.is_zoomed = not self.is_zoomed
-            log_session_event("PUNCH_TOGGLE", content, f"Zoom: {self.is_zoomed}")
+            log_session_event("PUNCH_TOGGLE", content, f"Zoom: {self.is_zoomed} | Pattern: {self.burst_var.get()}")
         else:
             self.is_zoomed = False
             self.last_pushed_text = content
             mode = self.preset_var.get()
             log_session_event("PUSH", content, f"Preset: {mode}")
 
-        broadcast_payload({"text": content, "zoom": self.is_zoomed})
+        broadcast_payload({
+            "text": content, 
+            "zoom": self.is_zoomed, 
+            "burst_mode": self.burst_var.get(),
+            "burst_bpm": int(self.bpm_var.get())
+        })
 
     def clear_all(self):
         self.text_input.delete("1.0", tk.END)
